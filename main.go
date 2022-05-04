@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"math"
-	"math/rand"
 	"sort"
 )
 
@@ -58,7 +57,7 @@ func (n *Node) FillUCTValue() {
 }
 
 func (n *Node) CreateChild(move int) {
-	nextState := n.State.NextState(move, n.State.PlayerNumber^1)
+	nextState := n.State.NextState(move)
 	n.AddChild(NewNode(nextState, n))
 }
 
@@ -134,19 +133,18 @@ func (s *State) Clone() *State {
 	}
 }
 
-func (s *State) NextState(move, playerNumber int) *State {
-	clone := s.Clone()
-	clone.Board.PerformMove(move, playerNumber)
-	return clone
+func (s *State) NextState(move int) *State {
+	player := s.PlayerNumber ^ 1
+	clonedBoard := s.Board.Clone()
+	clonedBoard.PerformMove(move, player)
+	return NewState(clonedBoard, player)
 }
 
 func (s *State) RandomPlay() *State {
-	moves := s.Board.EmptyPlaces()
-	lenMoves := len(moves)
-	if lenMoves == 0 {
-		return s
-	}
-	return s.NextState(moves[rand.Intn(lenMoves)], s.PlayerNumber^1)
+	player := s.PlayerNumber ^ 1
+	cloneBoard := s.Board.Clone()
+	cloneBoard.RandomPlay(player)
+	return NewState(cloneBoard, player)
 }
 
 type MonteCarloTreeSearch struct {
@@ -155,52 +153,30 @@ type MonteCarloTreeSearch struct {
 }
 
 func (m *MonteCarloTreeSearch) FindNextMove2(board Board, playerNumber int, numIterations int) Board {
-	opponent := playerNumber ^ 1
-	tree := NewTree(board, opponent)
+	m.Opponent = playerNumber ^ 1
+	tree := NewTree(board, m.Opponent)
 	iteration := 0
 	currentNode := tree.Root
 	for iteration < numIterations {
 		// is the current node a leaf?
+		currentNode = currentNode.SelectPromisingNode()
+		if currentNode.State.Board.CheckStatus() != InProgress {
+			currentNode = tree.Root
+		}
 		if len(currentNode.Children) == 0 && currentNode.State.VisitCount == 0 {
 			playout := m.SimulateRandomPlayout(currentNode)
 			m.BackPropagation(currentNode, playout)
-		}
-		if len(currentNode.Children) == 0 && currentNode.State.VisitCount > 0 {
+			currentNode = tree.Root
+		} else if len(currentNode.Children) == 0 && currentNode.State.VisitCount > 0 {
 			currentNode.ExpandNode()
 			currentNode = currentNode.Children[0]
 			playout := m.SimulateRandomPlayout(currentNode)
 			m.BackPropagation(currentNode, playout)
+			currentNode = tree.Root
 		}
-		promisingNode := currentNode.SelectPromisingNode()
-		if promisingNode.State.VisitCount == 0 {
-		} else if len(promisingNode.Children) == 0 { // is leaf node?
-			promisingNode.ExpandNode() // add all possible states from this state
-
-		}
-
-	}
-	return tree.Root.State.Board
-}
-
-func (m *MonteCarloTreeSearch) FindNextMove(board Board, playerNumber int, numIterations int) Board {
-	opponent := playerNumber ^ 1
-	tree := NewTree(board, opponent)
-	iteration := 0
-	for iteration < numIterations {
-		promisingNode := tree.Root.SelectPromisingNode()
-		if promisingNode.State.Board.CheckStatus() == InProgress && len(promisingNode.Children) == 0 {
-			promisingNode.ExpandNode()
-		}
-		nodeToExplore := promisingNode
-		childrenSize := len(promisingNode.Children)
-		if childrenSize > 0 {
-			nodeToExplore = promisingNode.Children[rand.Intn(childrenSize)]
-		}
-		playoutResult := m.SimulateRandomPlayout(nodeToExplore)
-		m.BackPropagation(nodeToExplore, playoutResult)
 		iteration += 1
 	}
-	winner := tree.Root.GetWinnerChild()
+	winner := tree.Root.SelectPromisingNode()
 	return winner.State.Board
 }
 
@@ -216,6 +192,10 @@ func (m *MonteCarloTreeSearch) SimulateRandomPlayout(node *Node) int {
 }
 
 func (m *MonteCarloTreeSearch) BackPropagation(node *Node, playerNumber int) {
+	if playerNumber == m.Opponent {
+		node.State.Score = math.MinInt
+		return
+	}
 	currNode := node
 	for currNode != nil {
 		currNode.State.VisitCount += 1
@@ -231,14 +211,14 @@ func main() {
 		Opponent: X,
 	}
 	board := NewTicTacToeBoard()
-	player := X
+	player := O
 	for board.CheckStatus() == InProgress {
 		if player == O {
 			var m int
 			_, _ = fmt.Scanln(&m)
 			board.PerformMove(m, player)
 		} else {
-			board = mcts.FindNextMove(board, player, 1000)
+			board = mcts.FindNextMove2(board, player, 1000)
 		}
 		player = player ^ 1
 		board.Print()
